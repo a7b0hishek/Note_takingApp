@@ -1,0 +1,520 @@
+const asyncHandler = require('express-async-handler');
+const bcrypt = require('bcryptjs');
+const User = require('../models/User');
+const Otp = require('../models/Otp');
+const generateToken = require('../utils/generateToken');
+const emailService = require('../utils/mailer');
+const { generateSecureOTP, validateOTPFormat } = require('../utils/otpGenerator');
+const { validateEmail, validateOTP } = require('../middleware/validation');
+
+// @desc    Send OTP for email verification
+// @route   POST /api/auth/send-otp
+// @access  Public
+const sendOTP = asyncHandler(async (req, res) => {
+  try {
+    const { email } = req.body;
+
+    // Validate email
+    const emailError = validateEmail(email);
+    if (emailError) {
+      return res.status(400).json({
+        success: false,
+        message: emailError
+      });
+    }
+
+    // Check if user already exists
+    const existingUser = await User.findOne({ email });
+    if (existingUser) {
+      return res.status(400).json({
+        success: false,
+        message: 'User with this email already exists'
+      });
+    }
+
+    // Generate OTP
+    const otp = generateSecureOTP();
+
+    // Delete any existing OTP for this email
+    await Otp.deleteMany({ email });
+
+    // Create new OTP record
+    await Otp.create({
+      email,
+      otp
+    });
+
+    // Send OTP via email
+    await emailService.sendOTP(email, otp);
+
+    res.status(200).json({
+      success: true,
+      message: 'OTP sent successfully to your email',
+      data: {
+        email,
+        expiresIn: '5 minutes'
+      }
+    });
+
+  } catch (error) {
+    console.error('Send OTP error:', error);
+    
+    // Check if it's an email configuration error
+    if (error.message && error.message.includes('Email service not configured')) {
+      return res.status(503).json({
+        success: false,
+        message: 'Email service is currently unavailable. Please try traditional signup or contact support.',
+        errorCode: 'EMAIL_SERVICE_UNAVAILABLE'
+      });
+    }
+    
+    res.status(500).json({
+      success: false,
+      message: 'Failed to send OTP. Please try again.'
+    });
+  }
+});
+
+// @desc    Verify OTP and complete registration
+// @route   POST /api/auth/verify-otp
+// @access  Public
+const verifyOTP = asyncHandler(async (req, res) => {
+  try {
+    const { email, otp, name, password } = req.body;
+
+    // Validate required fields
+    if (!email || !otp || !name || !password) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide email, OTP, name, and password'
+      });
+    }
+
+    // Validate email
+    const emailError = validateEmail(email);
+    if (emailError) {
+      return res.status(400).json({
+        success: false,
+        message: emailError
+      });
+    }
+
+    // Validate OTP
+    const otpError = validateOTP(otp);
+    if (otpError) {
+      return res.status(400).json({
+        success: false,
+        message: otpError
+      });
+    }
+
+    // Validate password strength
+    if (password.length < 6) {
+      return res.status(400).json({
+        success: false,
+        message: 'Password must be at least 6 characters long'
+      });
+    }
+
+    // Validate name
+    if (name.trim().length < 2) {
+      return res.status(400).json({
+        success: false,
+        message: 'Name must be at least 2 characters long'
+      });
+    }
+
+    // Find OTP record
+    const otpRecord = await Otp.findOne({ email, otp });
+
+    if (!otpRecord) {
+      return res.status(400).json({
+        success: false,
+        message: 'Incorrect or expired OTP'
+      });
+    }
+
+    // Check attempts
+    if (otpRecord.attempts >= 3) {
+      await Otp.deleteOne({ _id: otpRecord._id });
+      return res.status(400).json({
+        success: false,
+        message: 'Too many incorrect attempts. Please request a new OTP'
+      });
+    }
+    return res.status(400).json({
+      success: false,
+      message: 'Too many failed attempts. Please request a new OTP.'
+    });
+  }
+    // Check if already verified
+    if (otpRecord.verified) {
+      return res.status(400).json({
+        success: false,
+        message: 'OTP already used. Please request a new one.'
+      });
+    }
+
+    // Hash password
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash(password, salt);
+
+    // Create user
+    const user = await User.create({
+      name,
+      email,
+      password: hashedPassword,
+      authProvider: 'email',
+      isVerified: true
+    });
+
+    // Mark OTP as verified and delete
+    await Otp.deleteOne({ _id: otpRecord._id });
+
+    // Send welcome email (optional, don't fail registration if this fails)
+    try {
+      await emailService.sendWelcomeEmail(email, name);
+    } catch (error) {
+      console.error('Welcome email failed:', error);
+      // Don't fail registration if welcome email fails
+    }
+
+    res.status(201).json({
+      success: true,
+      message: 'Account created successfully',
+      data: {
+        user: {
+          id: user._id,
+          name: user.name,
+          email: user.email,
+          avatar: user.avatar,
+          authProvider: user.authProvider
+        },
+        token: generateToken(user._id)
+      }
+    });
+
+  } catch (error) {
+    console.error('User creation error:', error);
+    
+    // Handle specific errors
+    if (error.code === 11000) {
+      return res.status(400).json({
+        success: false,
+        message: 'Email already exists'
+      });
+    }
+    
+    res.status(500).json({
+      success: false,
+      message: 'Failed to create account. Please try again.'
+    });
+  }
+});
+    
+    // Increment attempts
+    otpRecord.attempts += 1;
+    await otpRecord.save();
+
+    res.status(500).json({
+      success: false,
+      message: 'Failed to create account. Please try again.'
+    });
+  }
+});
+
+// @desc    Register new user (traditional method)
+// @route   POST /api/auth/register
+// @access  Public
+const register = asyncHandler(async (req, res) => {
+  const { name, email, password } = req.body;
+
+  // Validation
+  if (!name || !email || !password) {
+    return res.status(400).json({
+      success: false,
+      message: 'Please provide name, email and password'
+    });
+  }
+
+  // Validate email format
+  const emailRegex = /^\w+([\.-]?\w+)*@\w+([\.-]?\w+)*(\.\w{2,3})+$/;
+  if (!emailRegex.test(email)) {
+    return res.status(400).json({
+      success: false,
+      message: 'Please provide a valid email address'
+    });
+  }
+
+  // Validate password strength
+  if (password.length < 6) {
+    return res.status(400).json({
+      success: false,
+      message: 'Password must be at least 6 characters long'
+    });
+  }
+
+  // Check if user already exists
+  const userExists = await User.findOne({ email });
+
+  if (userExists) {
+    return res.status(400).json({
+      success: false,
+      message: 'User already exists'
+    });
+  }
+
+  // Hash password
+  const salt = await bcrypt.genSalt(10);
+  const hashedPassword = await bcrypt.hash(password, salt);
+
+  // Create user
+  const user = await User.create({
+    name,
+    email,
+    password: hashedPassword,
+    authProvider: 'email',
+    isVerified: true // For direct registration without OTP
+  });
+
+  if (user) {
+    // Send welcome email
+    try {
+      await emailService.sendWelcomeEmail(email, name);
+    } catch (error) {
+      console.error('Welcome email failed:', error);
+    }
+
+    res.status(201).json({
+      success: true,
+      message: 'Account created successfully',
+      data: {
+        user: {
+          id: user._id,
+          name: user.name,
+          email: user.email,
+          avatar: user.avatar,
+          authProvider: user.authProvider
+        },
+        token: generateToken(user._id)
+      }
+    });
+  } else {
+    res.status(400).json({
+      success: false,
+      message: 'Invalid user data'
+    });
+  }
+});
+
+// @desc    Authenticate user & get token
+// @route   POST /api/auth/login
+// @access  Public
+const login = asyncHandler(async (req, res) => {
+  const { email, password } = req.body;
+
+  // Validation
+  if (!email || !password) {
+    return res.status(400).json({
+      success: false,
+      message: 'Please provide email and password'
+    });
+  }
+
+  // Check for user
+  const user = await User.findOne({ email }).select('+password');
+
+  if (!user) {
+    return res.status(401).json({
+      success: false,
+      message: 'Invalid credentials'
+    });
+  }
+
+  // Check if user registered with Google
+  if (user.authProvider === 'google' && !user.password) {
+    return res.status(400).json({
+      success: false,
+      message: 'Please login with Google or set a password for email login'
+    });
+  }
+
+  // Verify password
+  const isPasswordValid = await bcrypt.compare(password, user.password);
+
+  if (isPasswordValid) {
+    res.json({
+      success: true,
+      message: 'Login successful',
+      data: {
+        user: {
+          id: user._id,
+          name: user.name,
+          email: user.email,
+          avatar: user.avatar,
+          authProvider: user.authProvider
+        },
+        token: generateToken(user._id)
+      }
+    });
+  } else {
+    res.status(401).json({
+      success: false,
+      message: 'Invalid credentials'
+    });
+  }
+});
+
+// @desc    Google OAuth success callback
+// @route   GET /api/auth/google/success
+// @access  Public
+const googleSuccess = asyncHandler(async (req, res) => {
+  if (req.user) {
+    res.json({
+      success: true,
+      message: 'Google authentication successful',
+      data: {
+        user: {
+          id: req.user._id,
+          name: req.user.name,
+          email: req.user.email,
+          avatar: req.user.avatar,
+          authProvider: req.user.authProvider
+        },
+        token: generateToken(req.user._id)
+      }
+    });
+  } else {
+    res.status(401).json({
+      success: false,
+      message: 'Google authentication failed'
+    });
+  }
+});
+
+// @desc    Get current logged in user
+// @route   GET /api/auth/me
+// @access  Private
+const getMe = asyncHandler(async (req, res) => {
+  const user = await User.findById(req.user.id);
+
+  res.json({
+    success: true,
+    data: {
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        avatar: user.avatar,
+        authProvider: user.authProvider
+      }
+    }
+  });
+});
+
+// @desc    Update user profile
+// @route   PUT /api/auth/profile
+// @access  Private
+const updateProfile = asyncHandler(async (req, res) => {
+  const { name, email } = req.body;
+
+  const user = await User.findById(req.user.id);
+
+  if (user) {
+    // Check if email is being changed and if it already exists
+    if (email && email !== user.email) {
+      const emailExists = await User.findOne({ email });
+      if (emailExists) {
+        return res.status(400).json({
+          success: false,
+          message: 'Email already exists'
+        });
+      }
+    }
+
+    user.name = name || user.name;
+    user.email = email || user.email;
+
+    const updatedUser = await user.save();
+
+    res.json({
+      success: true,
+      message: 'Profile updated successfully',
+      data: {
+        user: {
+          id: updatedUser._id,
+          name: updatedUser.name,
+          email: updatedUser.email,
+          avatar: updatedUser.avatar,
+          authProvider: updatedUser.authProvider
+        }
+      }
+    });
+  } else {
+    res.status(404).json({
+      success: false,
+      message: 'User not found'
+    });
+  }
+});
+
+// @desc    Update password
+// @route   PUT /api/auth/password
+// @access  Private
+const updatePassword = asyncHandler(async (req, res) => {
+  const { currentPassword, newPassword } = req.body;
+
+  if (!currentPassword || !newPassword) {
+    return res.status(400).json({
+      success: false,
+      message: 'Please provide current and new password'
+    });
+  }
+
+  if (newPassword.length < 6) {
+    return res.status(400).json({
+      success: false,
+      message: 'New password must be at least 6 characters long'
+    });
+  }
+
+  const user = await User.findById(req.user.id).select('+password');
+
+  // Check if user has a password (not Google OAuth only)
+  if (!user.password) {
+    return res.status(400).json({
+      success: false,
+      message: 'Cannot change password for Google OAuth accounts'
+    });
+  }
+
+  // Check current password
+  if (!(await bcrypt.compare(currentPassword, user.password))) {
+    return res.status(400).json({
+      success: false,
+      message: 'Current password is incorrect'
+    });
+  }
+
+  // Hash new password
+  const salt = await bcrypt.genSalt(10);
+  user.password = await bcrypt.hash(newPassword, salt);
+
+  await user.save();
+
+  res.json({
+    success: true,
+    message: 'Password updated successfully'
+  });
+});
+
+module.exports = {
+  sendOTP,
+  verifyOTP,
+  register,
+  login,
+  googleSuccess,
+  getMe,
+  updateProfile,
+  updatePassword
+};

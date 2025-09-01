@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OTP System Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 600px;
+            margin: 50px auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .form-group {
+            margin-bottom: 20px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+        input {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            font-size: 16px;
+        }
+        button {
+            background: #007bff;
+            color: white;
+            padding: 12px 24px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            margin-right: 10px;
+        }
+        button:hover {
+            background: #0056b3;
+        }
+        .response {
+            margin-top: 20px;
+            padding: 15px;
+            border-radius: 5px;
+            white-space: pre-wrap;
+            font-family: monospace;
+            font-size: 14px;
+        }
+        .success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        .error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        .info {
+            background: #d1ecf1;
+            color: #0c5460;
+            border: 1px solid #bee5eb;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔐 OTP System Test</h1>
+        <p>Test the Email OTP authentication system</p>
+
+        <div class="form-group">
+            <label for="email">Email Address:</label>
+            <input type="email" id="email" placeholder="Enter your email address" value="test@example.com">
+        </div>
+
+        <button onclick="sendOTP()">📧 Send OTP</button>
+        <button onclick="checkHealth()">🔍 Check API Health</button>
+        <button onclick="debugOTP()">🐛 Debug OTP System</button>
+
+        <div class="form-group" style="margin-top: 30px;">
+            <label for="otp">OTP Code:</label>
+            <input type="text" id="otp" placeholder="Enter 6-digit OTP" maxlength="6">
+        </div>
+
+        <button onclick="verifyOTP()">✅ Verify OTP</button>
+        <button onclick="resendOTP()">🔄 Resend OTP</button>
+
+        <div id="response"></div>
+    </div>
+
+    <script>
+        const API_BASE = 'http://localhost:5001/api';
+
+        function showResponse(data, type = 'info') {
+            const responseDiv = document.getElementById('response');
+            responseDiv.innerHTML = JSON.stringify(data, null, 2);
+            responseDiv.className = `response ${type}`;
+        }
+
+        async function checkHealth() {
+            try {
+                const response = await fetch(`${API_BASE}/health`);
+                const data = await response.json();
+                showResponse(data, response.ok ? 'success' : 'error');
+            } catch (error) {
+                showResponse({ error: error.message }, 'error');
+            }
+        }
+
+        async function sendOTP() {
+            const email = document.getElementById('email').value;
+            
+            if (!email) {
+                showResponse({ error: 'Please enter an email address' }, 'error');
+                return;
+            }
+
+            try {
+                showResponse({ status: 'Sending OTP...', email }, 'info');
+                
+                const response = await fetch(`${API_BASE}/auth/send-otp`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ email })
+                });
+
+                const data = await response.json();
+                showResponse(data, response.ok ? 'success' : 'error');
+                
+                if (response.ok) {
+                    showResponse({
+                        ...data,
+                        note: 'Check the backend terminal console for the OTP code!'
+                    }, 'success');
+                    document.getElementById('otp').focus();
+                }
+            } catch (error) {
+                showResponse({ 
+                    error: error.message, 
+                    note: 'Make sure the backend server is running on port 5001'
+                }, 'error');
+            }
+        }
+
+        async function verifyOTP() {
+            const email = document.getElementById('email').value;
+            const otp = document.getElementById('otp').value;
+            
+            if (!email || !otp) {
+                showResponse({ error: 'Please enter both email and OTP' }, 'error');
+                return;
+            }
+
+            try {
+                const response = await fetch(`${API_BASE}/auth/verify-otp`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ email, otp })
+                });
+
+                const data = await response.json();
+                showResponse(data, response.ok ? 'success' : 'error');
+            } catch (error) {
+                showResponse({ error: error.message }, 'error');
+            }
+        }
+
+        async function resendOTP() {
+            const email = document.getElementById('email').value;
+            
+            if (!email) {
+                showResponse({ error: 'Please enter an email address' }, 'error');
+                return;
+            }
+
+            try {
+                const response = await fetch(`${API_BASE}/auth/send-otp`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ email })
+                });
+
+                const data = await response.json();
+                showResponse(data, response.ok ? 'success' : 'error');
+            } catch (error) {
+                showResponse({ error: error.message }, 'error');
+            }
+        }
+
+        async function debugOTP() {
+            const email = document.getElementById('email').value || 'debug@test.com';
+            
+            try {
+                showResponse({ status: 'Running OTP debug test...', email }, 'info');
+                
+                const response = await fetch(`${API_BASE}/debug/otp`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ email })
+                });
+
+                const data = await response.json();
+                showResponse(data, response.ok ? 'success' : 'error');
+                
+                if (response.ok && data.data && data.data.otp) {
+                    document.getElementById('otp').value = data.data.otp;
+                }
+            } catch (error) {
+                showResponse({ 
+                    error: error.message, 
+                    note: 'Debug endpoint test failed. Check server logs.'
+                }, 'error');
+            }
+        }
+
+        // Auto-check health on page load
+        window.onload = () => {
+            checkHealth();
+        };
+    </script>
+</body>
+</html>

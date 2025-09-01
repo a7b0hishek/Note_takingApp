@@ -1,0 +1,89 @@
+import React from 'react';
+import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { Provider } from 'react-redux';
+import { Toaster } from 'react-hot-toast';
+import { store } from './redux/store';
+import Navbar from './components/Navbar';
+import DevOTPHelper from './components/DevOTPHelper';
+import Home from './pages/Home';
+import Notes from './pages/Notes';
+import AddNote from './pages/AddNote';
+import EditNote from './pages/EditNote';
+import SignIn from './pages/SignIn';
+import Signup from './pages/Signup';
+import GoogleCallback from './pages/GoogleCallback';
+import ProtectedRoute from './components/ProtectedRoute';
+import './styles/index.css';
+
+function App() {
+  return (
+    <Provider store={store}>
+      <Router>
+        <div className="min-h-screen bg-gray-50">
+          <Navbar />
+          <main className="container mx-auto px-4 py-8">
+            <Routes>
+              {/* Public Routes */}
+              <Route path="/" element={<Home />} />
+              <Route path="/signin" element={<SignIn />} />
+              <Route path="/signup" element={<Signup />} />
+              <Route path="/auth/google/callback" element={<GoogleCallback />} />
+              
+              {/* Protected Routes */}
+              <Route 
+                path="/notes" 
+                element={
+                  <ProtectedRoute>
+                    <Notes />
+                  </ProtectedRoute>
+                } 
+              />
+              <Route 
+                path="/add-note" 
+                element={
+                  <ProtectedRoute>
+                    <AddNote />
+                  </ProtectedRoute>
+                } 
+              />
+              <Route 
+                path="/edit-note/:id" 
+                element={
+                  <ProtectedRoute>
+                    <EditNote />
+                  </ProtectedRoute>
+                } 
+              />
+              
+              {/* Catch all route */}
+              <Route path="*" element={<Navigate to="/" replace />} />
+            </Routes>
+          </main>
+          
+          <Toaster 
+            position="top-right"
+            toastOptions={{
+              duration: 4000,
+              style: {
+                background: '#363636',
+                color: '#fff',
+              },
+              success: {
+                duration: 4000,
+                theme: {
+                  primary: 'green',
+                  secondary: 'black',
+                },
+              },
+            }}
+          />
+          
+          {/* Development OTP Helper */}
+          <DevOTPHelper />
+        </div>
+      </Router>
+    </Provider>
+  );
+}
+
+export default App;
